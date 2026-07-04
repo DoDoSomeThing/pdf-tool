@@ -296,7 +296,7 @@ function currentPdf(silent) {
   if (sel && sel.kind === "pdf") return sel;
   const pdfs = files.filter((f) => f.kind === "pdf");
   if (pdfs.length === 1) return pdfs[0];
-  if (!silent) alert(pdfs.length ? "請先在清單點選要拆分的 PDF" : "清單裡沒有 PDF！");
+  if (!silent) alert(pdfs.length ? "清單有多個 PDF：請先在清單點一下要操作的那個 PDF" : "清單裡沒有 PDF，請先新增 PDF！");
   return null;
 }
 function updateSplitHint() {
