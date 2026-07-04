@@ -39,7 +39,8 @@ body{
 .filelist li .pages{flex:0 0 auto; font-size:12px; color:var(--sub);}
 .filelist li.selected .pages{color:#DCE7FF;}
 
-.split-row{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:10px; font-size:14px;}
+.split-row{display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:18px;
+  padding-bottom:16px; border-bottom:1px solid var(--border); font-size:14px;}
 #split-range{padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; width:160px;}
 #split-hint{margin-left:2px;}
 
