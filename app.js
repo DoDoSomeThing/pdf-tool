@@ -307,8 +307,11 @@ function currentPdf(silent) {
   return null;
 }
 function updateSplitHint() {
+  // 在工具面板標題後顯示目前選取的 PDF（若該工具吃 PDF）
+  const el = $("#tp-selinfo");
+  if (!el) return;
   const f = currentPdf(true);
-  $("#split-hint").textContent = f ? `（${f.name}，共 ${f.pages || "?"} 頁）` : "";
+  el.textContent = f ? `　·　目前：${f.name}（${f.pages || "?"} 頁）` : "";
 }
 // "1-3,5,8-10" → 0-based 索引陣列（驗證範圍、去重、保留輸入順序）
 function parseRange(str, max) {
@@ -505,4 +508,191 @@ $("#ed-export").onclick = async () => {
   } finally { $("#ed-export").disabled = false; }
 };
 
+// ── 左側工具切換 ──
+const TOOL_TITLES = {
+  merge: "合併", toimg: "PDF → 圖片", split: "拆分", editor: "頁面編輯",
+  nup: "多頁併一頁", crop: "裁切", removeblank: "去空白頁",
+  pagenum: "頁碼", watermark: "浮水印", metadata: "文件資訊",
+};
+function selectTool(name) {
+  document.querySelectorAll(".navitem").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tool === name));
+  document.querySelectorAll(".tp-body").forEach((p) =>
+    p.hidden = p.dataset.panel !== name);
+  $("#tp-title").textContent = TOOL_TITLES[name] || "工具";
+  updateSplitHint();
+}
+document.querySelectorAll(".navitem").forEach((b) =>
+  b.addEventListener("click", () => selectTool(b.dataset.tool)));
+
+// ── 共用：載入選取 PDF 的 pdf-lib 文件 ──
+async function loadSelectedPdf() {
+  const f = currentPdf();
+  if (!f) return null;
+  const doc = await PDFDocument.load(f.bytes);
+  return { f, doc, stem: f.name.replace(/\.pdf$/i, "") };
+}
+function savePdfDownload(bytes, name) {
+  download(new Blob([bytes], { type: "application/pdf" }), name);
+}
+
+// ── 頁碼 ──
+$("#btn-pagenum").onclick = async () => {
+  const ctx = await loadSelectedPdf(); if (!ctx) return;
+  const pos = $("#pn-pos").value, start = parseInt($("#pn-start").value, 10) || 0;
+  const size = parseInt($("#pn-size").value, 10) || 11;
+  setBusy(true); log(`▶ 加頁碼…`, "info");
+  try {
+    const font = await ctx.doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    ctx.doc.getPages().forEach((pg, i) => {
+      const { width } = pg.getSize();
+      const label = String(start + i);
+      const w = font.widthOfTextAtSize(label, size);
+      let x = width / 2 - w / 2;
+      if (pos === "br") x = width - w - 36;
+      if (pos === "bl") x = 36;
+      pg.drawText(label, { x, y: 24, size, font, color: PDFLib.rgb(0.2, 0.2, 0.2) });
+    });
+    savePdfDownload(await ctx.doc.save(), `${ctx.stem}_頁碼_${stamp()}.pdf`);
+    log(`🎉 已加頁碼 → ${ctx.stem}_頁碼.pdf`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); }
+};
+
+// ── 浮水印 ──
+$("#btn-watermark").onclick = async () => {
+  const text = $("#wm-text").value.trim();
+  if (!text) { alert("請輸入浮水印文字"); return; }
+  const ctx = await loadSelectedPdf(); if (!ctx) return;
+  const size = parseInt($("#wm-size").value, 10) || 48;
+  const op = Math.min(0.8, Math.max(0.05, (parseInt($("#wm-opacity").value, 10) || 15) / 100));
+  setBusy(true); log(`▶ 蓋浮水印…`, "info");
+  try {
+    const font = await ctx.doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    ctx.doc.getPages().forEach((pg) => {
+      const { width, height } = pg.getSize();
+      const w = font.widthOfTextAtSize(text, size);
+      pg.drawText(text, {
+        x: width / 2 - (w / 2) * Math.cos(Math.PI / 4),
+        y: height / 2 - (w / 2) * Math.sin(Math.PI / 4),
+        size, font, color: PDFLib.rgb(0.5, 0.5, 0.5),
+        rotate: degrees(45), opacity: op,
+      });
+    });
+    savePdfDownload(await ctx.doc.save(), `${ctx.stem}_浮水印_${stamp()}.pdf`);
+    log(`🎉 已蓋浮水印「${text}」`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); }
+};
+
+// ── 文件資訊 metadata ──
+$("#btn-metadata").onclick = async () => {
+  const ctx = await loadSelectedPdf(); if (!ctx) return;
+  setBusy(true); log(`▶ 套用文件資訊…`, "info");
+  try {
+    const t = $("#md-title").value, a = $("#md-author").value, s = $("#md-subject").value;
+    if (t) ctx.doc.setTitle(t);
+    if (a) ctx.doc.setAuthor(a);
+    if (s) ctx.doc.setSubject(s);
+    savePdfDownload(await ctx.doc.save(), `${ctx.stem}_資訊_${stamp()}.pdf`);
+    log(`🎉 已套用文件資訊`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); }
+};
+
+// ── 多頁併一頁 n-up（pdf.js 光柵化，穩定不吃 embedPdf 的雷） ──
+$("#btn-nup").onclick = async () => {
+  const f = currentPdf(); if (!f) return;
+  const n = parseInt($("#nup-n").value, 10);
+  const cols = n === 2 ? 1 : 2, rows = n === 2 ? 2 : (n === 4 ? 2 : 3);
+  const stem = f.name.replace(/\.pdf$/i, "");
+  setBusy(true); setBar(0); log(`▶ ${n} 頁併一頁…`, "info");
+  try {
+    const jsdoc = await pdfjsLib.getDocument({ data: f.bytes.slice(0) }).promise;
+    const p0 = (await jsdoc.getPage(1)).getViewport({ scale: 1 });
+    const W = p0.width, H = p0.height, cw = W / cols, ch = H / rows;
+    const out = await PDFDocument.create();
+    const imgs = [];
+    for (let p = 1; p <= jsdoc.numPages; p++) {
+      const page = await jsdoc.getPage(p);
+      const vp = page.getViewport({ scale: 150 / 72 });
+      const c = document.createElement("canvas");
+      c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const cx = c.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: cx, viewport: vp }).promise;
+      const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+      imgs.push(new Uint8Array(await blob.arrayBuffer()));
+      setBar((p / jsdoc.numPages) * 0.6);
+    }
+    for (let i = 0; i < imgs.length; i += n) {
+      const page = out.addPage([W, H]);
+      for (let k = 0; k < n && i + k < imgs.length; k++) {
+        const jimg = await out.embedJpg(imgs[i + k]);
+        const col = k % cols, row = Math.floor(k / cols);
+        const s = Math.min(cw / jimg.width, ch / jimg.height) * 0.96;
+        const dw = jimg.width * s, dh = jimg.height * s;
+        page.drawImage(jimg, {
+          x: col * cw + (cw - dw) / 2,
+          y: H - (row + 1) * ch + (ch - dh) / 2, width: dw, height: dh,
+        });
+      }
+      setBar(0.6 + ((i + n) / imgs.length) * 0.4);
+    }
+    savePdfDownload(await out.save(), `${stem}_${n}合1_${stamp()}.pdf`);
+    log(`🎉 ${n} 頁併一頁完成`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); setBar(0); }
+};
+
+// ── 裁切（依百分比裁四邊） ──
+$("#btn-crop").onclick = async () => {
+  const ctx = await loadSelectedPdf(); if (!ctx) return;
+  const pct = Math.min(45, Math.max(0, parseFloat($("#crop-pct").value) || 0)) / 100;
+  setBusy(true); log(`▶ 裁切 ${pct * 100}% …`, "info");
+  try {
+    ctx.doc.getPages().forEach((pg) => {
+      const { width, height } = pg.getSize();
+      const mx = width * pct, my = height * pct;
+      pg.setCropBox(mx, my, width - 2 * mx, height - 2 * my);
+    });
+    savePdfDownload(await ctx.doc.save(), `${ctx.stem}_裁切_${stamp()}.pdf`);
+    log(`🎉 已裁切四邊 ${pct * 100}%`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); }
+};
+
+// ── 去空白頁（pdf.js 渲染判斷近全白） ──
+$("#btn-removeblank").onclick = async () => {
+  const f = currentPdf(); if (!f) return;
+  setBusy(true); setBar(0); log(`▶ 偵測空白頁…`, "info");
+  try {
+    const jsdoc = await pdfjsLib.getDocument({ data: f.bytes.slice(0) }).promise;
+    const keep = [];
+    for (let p = 1; p <= jsdoc.numPages; p++) {
+      const page = await jsdoc.getPage(p);
+      const vp = page.getViewport({ scale: 0.4 });
+      const c = document.createElement("canvas");
+      c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const ctx2 = c.getContext("2d");
+      ctx2.fillStyle = "#fff"; ctx2.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx2, viewport: vp }).promise;
+      const data = ctx2.getImageData(0, 0, c.width, c.height).data;
+      let ink = 0;
+      for (let i = 0; i < data.length; i += 4)
+        if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) ink++;
+      if (ink / (c.width * c.height) > 0.002) keep.push(p - 1); // >0.2% 非白 = 有內容
+      setBar(p / jsdoc.numPages);
+    }
+    if (!keep.length) { alert("偵測結果全是空白頁，未輸出"); return; }
+    const src = await PDFDocument.load(f.bytes);
+    const out = await PDFDocument.create();
+    (await out.copyPages(src, keep)).forEach((pg) => out.addPage(pg));
+    const removed = jsdoc.numPages - keep.length;
+    savePdfDownload(await out.save(), `${f.name.replace(/\.pdf$/i, "")}_去空白_${stamp()}.pdf`);
+    log(`🎉 移除 ${removed} 空白頁，保留 ${keep.length} 頁`, "ok");
+  } catch (e) { log(`✘ 錯誤：${e.message}`, "err"); }
+  finally { setBusy(false); setBar(0); }
+};
+
+selectTool("merge");   // 預設顯示合併
 render();

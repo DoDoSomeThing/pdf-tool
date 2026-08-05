@@ -3,65 +3,140 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PDF 合併工具</title>
+<title>PDF 工具</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="app">
-  <header class="titlebar">
-    <div class="title">🗂 PDF 合併工具</div>
-    <div class="subtitle">圖片 / PDF → 合併成單一 PDF ・ 全程在你瀏覽器內處理，檔案不上傳</div>
-  </header>
+<div class="shell">
 
-  <section class="card">
-    <div class="card-header">
-      <span>📋 檔案清單（可拖曳調整順序）</span>
-      <span class="hint">拖放檔案至下方，或點按鈕新增</span>
-    </div>
-    <div id="dropzone" class="dropzone">
-      <div id="empty" class="empty">
-        📂<br><br>將 JPG、PNG、PDF 拖放至此<br>或點下方按鈕新增檔案
+  <aside class="sidebar">
+    <div class="brand">🗂 <span>PDF 工具</span></div>
+    <nav class="toolnav">
+      <div class="navgroup">組合</div>
+      <button class="navitem" data-tool="merge">⬇ 合併</button>
+      <div class="navgroup">轉換</div>
+      <button class="navitem" data-tool="toimg">🖼 PDF → 圖片</button>
+      <div class="navgroup">頁面</div>
+      <button class="navitem" data-tool="split">✂ 拆分</button>
+      <button class="navitem" data-tool="editor">✎ 頁面編輯</button>
+      <button class="navitem" data-tool="nup">▦ 多頁併一頁</button>
+      <button class="navitem" data-tool="crop">⛶ 裁切</button>
+      <button class="navitem" data-tool="removeblank">␡ 去空白頁</button>
+      <div class="navgroup">加工</div>
+      <button class="navitem" data-tool="pagenum"># 頁碼</button>
+      <button class="navitem" data-tool="watermark">💧 浮水印</button>
+      <button class="navitem" data-tool="metadata">ⓘ 文件資訊</button>
+    </nav>
+    <div class="sidefoot">全程瀏覽器內處理<br>檔案不上傳</div>
+  </aside>
+
+  <main class="workspace">
+    <!-- 共用檔案工作區 -->
+    <section class="card">
+      <div class="card-header">
+        <span>📋 檔案清單（可拖曳調整順序）</span>
+        <span class="hint">拖放檔案至下方，或點按鈕新增</span>
       </div>
-      <ul id="filelist" class="filelist"></ul>
-    </div>
-  </section>
+      <div id="dropzone" class="dropzone">
+        <div id="empty" class="empty">📂<br><br>將 JPG、PNG、PDF 拖放至此<br>或點下方按鈕新增檔案</div>
+        <ul id="filelist" class="filelist"></ul>
+      </div>
+      <div class="ctrl-row">
+        <button class="sbtn" id="btn-add-img">＋ 新增圖片</button>
+        <button class="sbtn" id="btn-add-pdf">＋ 新增 PDF</button>
+        <button class="sbtn" id="btn-up">↑ 上移</button>
+        <button class="sbtn" id="btn-down">↓ 下移</button>
+        <button class="sbtn danger" id="btn-del">✕ 刪除</button>
+        <button class="sbtn danger" id="btn-clear">🗑 全部清除</button>
+      </div>
+    </section>
 
-  <div class="ctrl-row">
-    <button class="sbtn" id="btn-add-img">＋ 新增圖片</button>
-    <button class="sbtn" id="btn-add-pdf">＋ 新增 PDF</button>
-    <button class="sbtn" id="btn-up">↑ 上移</button>
-    <button class="sbtn" id="btn-down">↓ 下移</button>
-    <button class="sbtn danger" id="btn-del">✕ 刪除</button>
-    <button class="sbtn danger" id="btn-clear">🗑 全部清除</button>
-    <button class="sbtn" id="btn-edit"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> 頁面編輯</button>
-  </div>
+    <!-- 工具面板（依左側選擇切換） -->
+    <section class="card toolpanel">
+      <div class="tp-title"><span id="tp-title">選一個工具</span><span class="muted small" id="tp-selinfo"></span></div>
 
-  <div class="fmt-row">
-    <span class="muted">PDF → 圖片　格式：</span>
-    <label><input type="radio" name="fmt" value="JPG" checked> JPG</label>
-    <label><input type="radio" name="fmt" value="PNG"> PNG</label>
-    <span class="muted">　DPI：</span>
-    <select id="dpi">
-      <option>150</option><option>200</option><option selected>300</option><option>600</option>
-    </select>
-    <span class="muted small">（數字越大越清晰）</span>
-  </div>
+      <div class="tp-body" data-panel="merge" hidden>
+        <p class="tp-desc">把清單裡的圖片與 PDF 依順序合併成單一 PDF。</p>
+        <button class="big merge" id="btn-merge">⬇ 合併輸出 PDF</button>
+      </div>
 
-  <div class="split-row">
-    <span class="muted">✂ 拆分（對選取的 PDF）：</span>
-    <input id="split-range" type="text" placeholder="頁碼 如 1-3,5,8-10">
-    <button class="sbtn" id="btn-split-extract">擷取這些頁</button>
-    <button class="sbtn" id="btn-split-each">每頁拆單檔</button>
-    <span id="split-hint" class="muted small"></span>
-  </div>
+      <div class="tp-body" data-panel="toimg" hidden>
+        <p class="tp-desc">把清單中的 PDF 每頁轉成圖片（多張自動打包 zip）。</p>
+        <div class="fmt-row">
+          <span class="muted">格式：</span>
+          <label><input type="radio" name="fmt" value="JPG" checked> JPG</label>
+          <label><input type="radio" name="fmt" value="PNG"> PNG</label>
+          <span class="muted">　DPI：</span>
+          <select id="dpi"><option>150</option><option>200</option><option selected>300</option><option>600</option></select>
+          <span class="muted small">（數字越大越清晰）</span>
+        </div>
+        <button class="big toimg" id="btn-toimg">🖼 PDF → 圖片</button>
+      </div>
 
-  <div class="action-row">
-    <button class="big merge" id="btn-merge">⬇ 合併輸出 PDF</button>
-    <button class="big toimg" id="btn-toimg">🖼 PDF → 圖片</button>
-  </div>
+      <div class="tp-body" data-panel="split" hidden>
+        <p class="tp-desc">對選取的 PDF：擷取指定頁碼，或每頁拆成單檔。</p>
+        <div class="field"><label>頁碼</label>
+          <input id="split-range" type="text" placeholder="如 1-3,5,8-10"></div>
+        <div class="btn-row">
+          <button class="sbtn" id="btn-split-extract">擷取這些頁</button>
+          <button class="sbtn" id="btn-split-each">每頁拆單檔</button>
+        </div>
+      </div>
 
-  <div id="bar" class="progress"><div id="bar-fill"></div></div>
-  <pre id="log" class="log"></pre>
+      <div class="tp-body" data-panel="editor" hidden>
+        <p class="tp-desc">對選取的 PDF 逐頁旋轉、刪頁、拖曳重排，再輸出新 PDF。</p>
+        <button class="big merge" id="btn-edit">✎ 開啟頁面編輯</button>
+      </div>
+
+      <div class="tp-body" data-panel="nup" hidden>
+        <p class="tp-desc">把選取 PDF 的多頁縮排到同一頁（省紙／講義）。</p>
+        <div class="field"><label>每頁放</label>
+          <select id="nup-n"><option value="2">2 頁</option><option value="4">4 頁</option><option value="6">6 頁</option></select></div>
+        <button class="big merge" id="btn-nup">▦ 產生併頁 PDF</button>
+      </div>
+
+      <div class="tp-body" data-panel="crop" hidden>
+        <p class="tp-desc">對選取 PDF 每頁裁掉四邊留白（依百分比）。</p>
+        <div class="field"><label>裁掉邊界 %</label>
+          <input id="crop-pct" type="number" value="5" min="0" max="45" step="1"></div>
+        <button class="big merge" id="btn-crop">⛶ 裁切輸出</button>
+      </div>
+
+      <div class="tp-body" data-panel="removeblank" hidden>
+        <p class="tp-desc">偵測選取 PDF 的空白頁並移除，輸出新 PDF。</p>
+        <button class="big merge" id="btn-removeblank">␡ 去空白頁</button>
+      </div>
+
+      <div class="tp-body" data-panel="pagenum" hidden>
+        <p class="tp-desc">在選取 PDF 每頁加上頁碼。</p>
+        <div class="field"><label>位置</label>
+          <select id="pn-pos">
+            <option value="bc">底部置中</option><option value="br">右下</option><option value="bl">左下</option></select></div>
+        <div class="field"><label>起始號</label><input id="pn-start" type="number" value="1" min="0"></div>
+        <div class="field"><label>字級</label><input id="pn-size" type="number" value="11" min="6" max="48"></div>
+        <button class="big merge" id="btn-pagenum"># 加頁碼</button>
+      </div>
+
+      <div class="tp-body" data-panel="watermark" hidden>
+        <p class="tp-desc">在選取 PDF 每頁蓋上斜向文字浮水印。</p>
+        <div class="field"><label>文字</label><input id="wm-text" type="text" placeholder="機密 / 草稿 / DRAFT"></div>
+        <div class="field"><label>字級</label><input id="wm-size" type="number" value="48" min="10" max="200"></div>
+        <div class="field"><label>透明度</label><input id="wm-opacity" type="number" value="15" min="5" max="80"> %</div>
+        <button class="big merge" id="btn-watermark">💧 蓋浮水印</button>
+      </div>
+
+      <div class="tp-body" data-panel="metadata" hidden>
+        <p class="tp-desc">修改選取 PDF 的標題／作者等資訊。</p>
+        <div class="field"><label>標題</label><input id="md-title" type="text"></div>
+        <div class="field"><label>作者</label><input id="md-author" type="text"></div>
+        <div class="field"><label>主旨</label><input id="md-subject" type="text"></div>
+        <button class="big merge" id="btn-metadata">ⓘ 套用資訊</button>
+      </div>
+    </section>
+
+    <div id="bar" class="progress"><div id="bar-fill"></div></div>
+    <pre id="log" class="log"></pre>
+  </main>
 </div>
 
 <div id="editor" class="editor-overlay" hidden>
