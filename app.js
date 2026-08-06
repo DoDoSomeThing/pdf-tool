@@ -8,6 +8,72 @@ const { PDFDocument, degrees } = PDFLib;
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
+// ── 中文文字 ──
+// pdf-lib 內建 StandardFonts 只支援 WinAnsi 編碼，drawText 遇中文會 throw。
+// 兩條路：① 系統字型畫成 PNG 嵌入（預設，零下載）② 嵌 NotoSansTC subset（真文字，要下載）
+const FONTKIT_URL = "https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js";
+const CJK_FONT_URL =
+  "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/SubsetOTF/TC/NotoSansTC-Regular.otf";
+const CANVAS_FONTS =
+  '"Microsoft JhengHei","PingFang TC","Noto Sans TC",system-ui,sans-serif';
+
+const isAscii = (s) => /^[\x20-\x7E]*$/.test(s);
+
+let fontkitReady = false;
+let cjkFontBytes = null;   // 下載後留著，同分頁重複使用不再抓
+
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error("載入失敗：" + src));
+    document.head.appendChild(s);
+  });
+}
+
+// 高品質模式：嵌入 NotoSansTC（subset:true → 只帶用到的字，輸出檔只大幾 KB）
+async function embedCjkFont(doc) {
+  if (!fontkitReady) {
+    log("  · 載入 fontkit（約 0.7 MB）…", "info");
+    await loadScript(FONTKIT_URL);
+    fontkitReady = true;
+  }
+  if (!cjkFontBytes) {
+    log("  · 下載中文字型 NotoSansTC（約 5.4 MB，只需一次）…", "info");
+    const resp = await fetch(CJK_FONT_URL);
+    if (!resp.ok) throw new Error(`字型下載失敗 HTTP ${resp.status}`);
+    cjkFontBytes = new Uint8Array(await resp.arrayBuffer());
+  }
+  doc.registerFontkit(window.fontkit);
+  return doc.embedFont(cjkFontBytes, { subset: true });
+}
+
+// 預設模式：用瀏覽器內建中文字型把文字畫成透明背景 PNG（4x 超取樣，列印夠清晰）
+async function textToPng(text, sizePt, rgb01, bold) {
+  const SS = 4;
+  const px = sizePt * SS;
+  const font = `${bold ? "bold " : ""}${px}px ${CANVAS_FONTS}`;
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = font;
+  const m = meas.measureText(text);
+  const asc = Math.ceil(m.actualBoundingBoxAscent || px * 0.88);
+  const desc = Math.ceil(m.actualBoundingBoxDescent || px * 0.24);
+  const pad = Math.ceil(px * 0.08);
+
+  const c = document.createElement("canvas");
+  c.width = Math.ceil(m.width) + pad * 2;
+  c.height = asc + desc + pad * 2;
+  const cx = c.getContext("2d");
+  cx.font = font;                 // 改 canvas 尺寸會重置 context，font 必須重設
+  cx.textBaseline = "alphabetic";
+  cx.fillStyle = `rgb(${rgb01.map((v) => Math.round(v * 255)).join(",")})`;
+  cx.fillText(text, pad, asc + pad);
+
+  const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), w: c.width / SS, h: c.height / SS };
+}
+
 const IMG_EXT = ["jpg", "jpeg", "png", "bmp", "jfif", "webp"];
 let files = [];          // {id, name, kind:'image'|'pdf', ext, bytes:ArrayBuffer, pages?}
 let selected = null;     // 選中的 id
@@ -444,9 +510,9 @@ function renderEditor() {
       `<div class="pthumb-box"><img class="pthumb" alt=""></div>` +
       `<span class="pnum">第 ${pos + 1} 頁（原 ${op.index + 1}）</span>` +
       `<span class="pbtns">` +
-      `<button class="rl" title="左轉">⟲</button>` +
-      `<button class="rr" title="右轉">⟳</button>` +
-      `<button class="del" title="刪頁">🗑</button></span>`;
+      `<button class="rl" title="左轉"><svg class="ic ic-sm"><use href="#i-rot-l"/></svg></button>` +
+      `<button class="rr" title="右轉"><svg class="ic ic-sm"><use href="#i-rot-r"/></svg></button>` +
+      `<button class="del" title="刪頁"><svg class="ic ic-sm"><use href="#i-trash"/></svg></button></span>`;
     const img = card.querySelector(".pthumb");
     img.style.transform = `rotate(${op.rotate}deg)`;
     edPageThumb(op.index).then((u) => { img.src = u; }).catch(() => {});
@@ -566,18 +632,45 @@ $("#btn-watermark").onclick = async () => {
   const ctx = await loadSelectedPdf(); if (!ctx) return;
   const size = parseInt($("#wm-size").value, 10) || 48;
   const op = Math.min(0.8, Math.max(0.05, (parseInt($("#wm-opacity").value, 10) || 15) / 100));
+  const wantEmbed = $("#wm-embed").checked;
+  const GRAY = [0.5, 0.5, 0.5];
+  const RAD = Math.PI / 4;
   setBusy(true); log(`▶ 蓋浮水印…`, "info");
   try {
-    const font = await ctx.doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    let draw;   // (page, 頁寬, 頁高) => void
+    if (isAscii(text) || wantEmbed) {
+      // 真文字路徑：英數走內建 Helvetica，中文走 NotoSansTC subset
+      const font = isAscii(text)
+        ? await ctx.doc.embedFont(PDFLib.StandardFonts.HelveticaBold)
+        : await embedCjkFont(ctx.doc);
+      draw = (pg, W, H) => {
+        const w = font.widthOfTextAtSize(text, size);
+        pg.drawText(text, {
+          x: W / 2 - (w / 2) * Math.cos(RAD),
+          y: H / 2 - (w / 2) * Math.sin(RAD),
+          size, font, color: PDFLib.rgb(...GRAY),
+          rotate: degrees(45), opacity: op,
+        });
+      };
+    } else {
+      // 圖片路徑：整份共用同一個 PNG XObject，頁數再多也只加一份
+      const t = await textToPng(text, size, GRAY, true);
+      const png = await ctx.doc.embedPng(t.bytes);
+      draw = (pg, W, H) => {
+        // drawImage 的旋轉錨點在左下角，反推出讓圖中心落在頁面中心的 x/y
+        const cos = Math.cos(RAD), sin = Math.sin(RAD);
+        pg.drawImage(png, {
+          x: W / 2 - (t.w / 2) * cos + (t.h / 2) * sin,
+          y: H / 2 - (t.w / 2) * sin - (t.h / 2) * cos,
+          width: t.w, height: t.h,
+          rotate: degrees(45), opacity: op,
+        });
+      };
+      log(`  · 中文走圖片模式（不可選取，檔案 +${(t.bytes.length / 1024).toFixed(0)} KB）`, "info");
+    }
     ctx.doc.getPages().forEach((pg) => {
       const { width, height } = pg.getSize();
-      const w = font.widthOfTextAtSize(text, size);
-      pg.drawText(text, {
-        x: width / 2 - (w / 2) * Math.cos(Math.PI / 4),
-        y: height / 2 - (w / 2) * Math.sin(Math.PI / 4),
-        size, font, color: PDFLib.rgb(0.5, 0.5, 0.5),
-        rotate: degrees(45), opacity: op,
-      });
+      draw(pg, width, height);
     });
     savePdfDownload(await ctx.doc.save(), `${ctx.stem}_浮水印_${stamp()}.pdf`);
     log(`🎉 已蓋浮水印「${text}」`, "ok");
