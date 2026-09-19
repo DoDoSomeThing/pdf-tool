@@ -14,6 +14,7 @@
 - **拆分**：擷取指定頁碼為單一 PDF，或每頁拆成單檔（打包 zip）
 - **頁面編輯**：對 PDF 逐頁旋轉、刪頁、拖曳重排 → 輸出新 PDF
 - 清單縮圖預覽、拖曳排序
+- **可裝成 App**：支援 PWA，手機／桌面可「加到主畫面」當獨立 App 開，含品牌 favicon 與主畫面圖示（藍底白色文件）
 
 ## 💻 桌面版（可離線）
 
@@ -30,6 +31,7 @@
 ## 技術
 
 - 線上版：純前端 JS（[pdf-lib](https://pdf-lib.js.org/) 合併/拆分/頁面編輯、[pdf.js](https://mozilla.github.io/pdf.js/) 轉圖與縮圖、JSZip 打包），零後端
+- 圖示：`favicon.svg`（分頁圖示，內嵌 SVG）＋ `manifest.webmanifest` ＋ `icons/`（apple-touch-icon 180、icon-192/512），供 PWA 加到主畫面用
 - 桌面版：Python + tkinter + Pillow + pdf2image + poppler + pypdf（拆分）
 
 > 桌面版功能：合併、PDF↔圖片、拆分。縮圖與頁面編輯為線上版限定。
